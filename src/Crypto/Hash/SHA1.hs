@@ -17,7 +17,7 @@ module Crypto.Hash.SHA1
     --
     --  - 'init': create a new hash context
     --  - 'update': update non-destructively a new hash context with a strict bytestring
-    --  - 'updates': same as update, except that it takes a list of strict bytestring
+    --  - 'updates': same as update, except that it takes a list of strict bytestrings
     --  - 'finalize': finalize the context and returns a digest bytestring.
     --
     -- all those operations are completely pure, and instead of
@@ -67,15 +67,15 @@ module Crypto.Hash.SHA1
     ) where
 
 import Prelude hiding (init)
+import Foreign.C.Types
 import Foreign.Ptr
 import Foreign.ForeignPtr (withForeignPtr)
-import Foreign.Storable
 import Foreign.Marshal.Alloc
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import Data.ByteString (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
-import Data.ByteString.Internal (create, toForeignPtr)
+import Data.ByteString.Internal (create, toForeignPtr, memcpy)
 import Data.Word
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -88,6 +88,19 @@ unsafeDoIO :: IO a -> a
 unsafeDoIO = unsafeDupablePerformIO
 
 -- | SHA-1 Context
+--
+-- The context data is exactly 92 bytes long, however
+-- the data in the context is stored in host-endianness.
+--
+-- The context data is made up of
+--
+--  * a 'Word64' representing the number of bytes already feed to hash algorithm so far,
+--
+--  * a 64-element 'Word8' buffer holding partial input-chunks, and finally
+--
+--  * a 5-element 'Word32' array holding the current work-in-progress digest-value.
+--
+-- Consequently, a SHA-1 digest as produced by 'hash', 'hashlazy', or 'finalize' is 20 bytes long.
 newtype Ctx = Ctx ByteString
 
 {-# INLINE digestSize #-}
@@ -96,7 +109,7 @@ digestSize = 20
 
 {-# INLINE sizeCtx #-}
 sizeCtx :: Int
-sizeCtx = 96
+sizeCtx = 92
 
 {-# RULES "digestSize" B.length (finalize init) = digestSize #-}
 {-# RULES "hash" forall b. finalize (update init b) = hash b #-}
@@ -110,23 +123,22 @@ withByteStringPtr b f =
     withForeignPtr fptr $ \ptr -> f (ptr `plusPtr` off)
     where (fptr, off, _) = toForeignPtr b
 
-{-# INLINE memcopy64 #-}
-memcopy64 :: Ptr Word64 -> Ptr Word64 -> IO ()
-memcopy64 dst src = mapM_ peekAndPoke [0..(12-1)]
-    where peekAndPoke i = peekElemOff src i >>= pokeElemOff dst i
+copyCtx :: Ptr Ctx -> Ptr Ctx -> IO ()
+copyCtx dst src = memcpy (castPtr dst) (castPtr src) (fromIntegral sizeCtx)
 
 withCtxCopy :: Ctx -> (Ptr Ctx -> IO ()) -> IO Ctx
 withCtxCopy (Ctx ctxB) f = Ctx `fmap` createCtx
-    where createCtx = create sizeCtx $ \dstPtr ->
-                      withByteStringPtr ctxB $ \srcPtr -> do
-                          memcopy64 (castPtr dstPtr) (castPtr srcPtr)
-                          f (castPtr dstPtr)
+  where
+    createCtx = create sizeCtx $ \dstPtr ->
+                withByteStringPtr ctxB $ \srcPtr -> do
+                    copyCtx (castPtr dstPtr) (castPtr srcPtr)
+                    f (castPtr dstPtr)
 
 withCtxThrow :: Ctx -> (Ptr Ctx -> IO a) -> IO a
 withCtxThrow (Ctx ctxB) f =
     allocaBytes sizeCtx $ \dstPtr ->
     withByteStringPtr ctxB $ \srcPtr -> do
-        memcopy64 (castPtr dstPtr) (castPtr srcPtr)
+        copyCtx (castPtr dstPtr) (castPtr srcPtr)
         f (castPtr dstPtr)
 
 withCtxNew :: (Ptr Ctx -> IO ()) -> IO Ctx
@@ -139,7 +151,16 @@ foreign import ccall unsafe "sha1.h hs_cryptohash_sha1_init"
     c_sha1_init :: Ptr Ctx -> IO ()
 
 foreign import ccall unsafe "sha1.h hs_cryptohash_sha1_update"
-    c_sha1_update :: Ptr Ctx -> Ptr Word8 -> Word32 -> IO ()
+    c_sha1_update_unsafe :: Ptr Ctx -> Ptr Word8 -> CSize -> IO ()
+
+foreign import ccall safe "sha1.h hs_cryptohash_sha1_update"
+    c_sha1_update_safe :: Ptr Ctx -> Ptr Word8 -> CSize -> IO ()
+
+-- 'safe' call overhead neglible for 8KiB and more
+c_sha1_update :: Ptr Ctx -> Ptr Word8 -> CSize -> IO ()
+c_sha1_update pctx pbuf sz
+  | sz < 8192 = c_sha1_update_unsafe pctx pbuf sz
+  | otherwise  = c_sha1_update_safe   pctx pbuf sz
 
 foreign import ccall unsafe "sha1.h hs_cryptohash_sha1_finalize"
     c_sha1_finalize :: Ptr Ctx -> Ptr Word8 -> IO ()
@@ -152,33 +173,42 @@ finalizeInternalIO :: Ptr Ctx -> IO ByteString
 finalizeInternalIO ptr = create digestSize (c_sha1_finalize ptr)
 
 {-# NOINLINE init #-}
--- | init a context
+-- | create a new hash context
 init :: Ctx
 init = unsafeDoIO $ withCtxNew $ c_sha1_init
+
+validCtx :: Ctx -> Bool
+validCtx (Ctx b) = B.length b == sizeCtx
 
 {-# NOINLINE update #-}
 -- | update a context with a bytestring
 update :: Ctx -> ByteString -> Ctx
-update ctx d = unsafeDoIO $ withCtxCopy ctx $ \ptr -> updateInternalIO ptr d
+update ctx d
+  | validCtx ctx = unsafeDoIO $ withCtxCopy ctx $ \ptr -> updateInternalIO ptr d
+  | otherwise    = error "SHA1.update: invalid Ctx"
 
 {-# NOINLINE updates #-}
--- | updates a context with multiples bytestring
+-- | updates a context with multiple bytestrings
 updates :: Ctx -> [ByteString] -> Ctx
-updates ctx d = unsafeDoIO $ withCtxCopy ctx $ \ptr -> mapM_ (updateInternalIO ptr) d
+updates ctx d
+  | validCtx ctx = unsafeDoIO $ withCtxCopy ctx $ \ptr -> mapM_ (updateInternalIO ptr) d
+  | otherwise    = error "SHA1.updates: invalid Ctx"
 
 {-# NOINLINE finalize #-}
--- | finalize the context into a digest bytestring
+-- | finalize the context into a digest bytestring (16 bytes)
 finalize :: Ctx -> ByteString
-finalize ctx = unsafeDoIO $ withCtxThrow ctx finalizeInternalIO
+finalize ctx
+  | validCtx ctx = unsafeDoIO $ withCtxThrow ctx finalizeInternalIO
+  | otherwise    = error "SHA1.finalize: invalid Ctx"
 
 {-# NOINLINE hash #-}
--- | hash a strict bytestring into a digest bytestring
+-- | hash a strict bytestring into a digest bytestring (16 bytes)
 hash :: ByteString -> ByteString
 hash d = unsafeDoIO $ withCtxNewThrow $ \ptr -> do
     c_sha1_init ptr >> updateInternalIO ptr d >> finalizeInternalIO ptr
 
 {-# NOINLINE hashlazy #-}
--- | hash a lazy bytestring into a digest bytestring
+-- | hash a lazy bytestring into a digest bytestring (16 bytes)
 hashlazy :: L.ByteString -> ByteString
 hashlazy l = unsafeDoIO $ withCtxNewThrow $ \ptr -> do
     c_sha1_init ptr >> mapM_ (updateInternalIO ptr) (L.toChunks l) >> finalizeInternalIO ptr

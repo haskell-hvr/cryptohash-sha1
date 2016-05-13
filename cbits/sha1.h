@@ -27,19 +27,20 @@
 #define CRYPTOHASH_SHA1_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 struct sha1_ctx
 {
-	uint64_t sz;
-	uint8_t  buf[64];
-	uint32_t h[5];
+  uint64_t sz;
+  uint8_t  buf[64];
+  uint32_t h[5];
 };
 
 #define SHA1_DIGEST_SIZE	20
-#define SHA1_CTX_SIZE 		(sizeof(struct sha1_ctx))
+#define SHA1_CTX_SIZE 		92 /* NB: no 64-bit padding */
 
 void hs_cryptohash_sha1_init(struct sha1_ctx *ctx);
-void hs_cryptohash_sha1_update(struct sha1_ctx *ctx, uint8_t *data, uint32_t len);
+void hs_cryptohash_sha1_update(struct sha1_ctx *ctx, const uint8_t *data, size_t len);
 void hs_cryptohash_sha1_finalize(struct sha1_ctx *ctx, uint8_t *out);
 
 #endif
