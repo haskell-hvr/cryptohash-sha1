@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-
 import           Criterion.Main
 import qualified Crypto.Hash.SHA1     as SHA1
 import qualified Data.ByteString      as B
@@ -13,8 +11,8 @@ benchSize sz = bs `seq` bench msg (whnf SHA1.hash bs)
 
 main :: IO ()
 main = do
-    let !lbs64x256  = L.fromChunks $ replicate 4  (B.replicate 64 0)
-        !lbs64x4096 = L.fromChunks $ replicate 64 (B.replicate 64 0)
+    let lbs64x256  = L.fromChunks $ replicate 4  (B.replicate 64 0)
+        lbs64x4096 = L.fromChunks $ replicate 64 (B.replicate 64 0)
     defaultMain
         [ bgroup "cryptohash-sha1"
           [ benchSize 0
