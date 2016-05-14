@@ -90,13 +90,40 @@ katTests
       where
         vecXL = BL.fromChunks (replicate 16777216 "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno")
 
-    splitB :: Int -> ByteString -> [ByteString]
-    splitB l b
-      | B.length b > l = b1 : splitB l b2
-      | otherwise = [b]
-      where
-        (b1, b2) = B.splitAt l b
+splitB :: Int -> ByteString -> [ByteString]
+splitB l b
+  | B.length b > l = b1 : splitB l b2
+  | otherwise = [b]
+  where
+    (b1, b2) = B.splitAt l b
 
+
+rfc2202Vectors :: [(ByteString,ByteString,ByteString)]
+rfc2202Vectors = -- (secrect,msg,mac)
+    [ (rep 20 0x0b, "Hi There", x"b617318655057264e28bc0b6fb378c8ef146be00")
+    , ("Jefe", "what do ya want for nothing?", x"effcdf6ae5eb2fa2d27416d5f184df9c259a7c79")
+    , (rep 20 0xaa, rep 50 0xdd, x"125d7342b9ac11cd91a39af48aa17b4f63f175d3")
+    , (B.pack [1..25], rep 50 0xcd, x"4c9007f4026250c6bc8414f9bf50c86c2d7235da")
+    , (rep 20 0x0c, "Test With Truncation", x"4c1a03424b55e07fe7f27be1d58bb9324a9a5a04")
+    , (rep 80 0xaa, "Test Using Larger Than Block-Size Key - Hash Key First", x"aa4ae5e15272d00e95705637ce8a3b55ed402112")
+    , (rep 80 0xaa, "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data", x"e8e99d0f45237d786d6bbaa7965c7808bbff1a91")
+    , (rep 80 0xaa, "Test Using Larger Than Block-Size Key - Hash Key First", x"aa4ae5e15272d00e95705637ce8a3b55ed402112")
+    , (rep 80 0xaa, "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data", x"e8e99d0f45237d786d6bbaa7965c7808bbff1a91")
+    ]
+  where
+    x = fst.B16.decode
+    rep n c = B.replicate n c
+
+rfc2202Tests = zipWith makeTest [1::Int ..] rfc2202Vectors
+  where
+    makeTest i (key, msg, mac) = testGroup ("vec"++show i) $
+        [ testCase "hmac" (hex mac  @=? hex (IUT.hmac key msg))
+        , testCase "hmaclazy" (hex mac  @=? hex (IUT.hmaclazy key lazymsg))
+        ]
+      where
+        lazymsg = BL.fromChunks . splitB 1 $ msg
+
+    hex = B16.encode
 
 -- define own 'foldl' here to avoid RULE rewriting to 'hashlazy'
 myfoldl' :: (b -> a -> b) -> b -> [a] -> b
@@ -129,6 +156,8 @@ refImplTests :: [TestTree]
 refImplTests =
     [ testProperty "hash" prop_hash
     , testProperty "hashlazy" prop_hashlazy
+    , testProperty "hmac" prop_hmac
+    , testProperty "hmaclazy" prop_hmaclazy
     ]
   where
     prop_hash (RandBS bs)
@@ -137,11 +166,23 @@ refImplTests =
     prop_hashlazy (RandLBS bs)
         = ref_hashlazy bs == IUT.hashlazy bs
 
+    prop_hmac (RandBS k) (RandBS bs)
+        = ref_hmac k bs == IUT.hmac k bs
+
+    prop_hmaclazy (RandBS k) (RandLBS bs)
+        = ref_hmaclazy k bs == IUT.hmaclazy k bs
+
     ref_hash :: ByteString -> ByteString
-    ref_hash = toStrict . REF.bytestringDigest . REF.sha1 . fromStrict
+    ref_hash = ref_hashlazy . fromStrict
 
     ref_hashlazy :: BL.ByteString -> ByteString
     ref_hashlazy = toStrict . REF.bytestringDigest . REF.sha1
+
+    ref_hmac :: ByteString -> ByteString -> ByteString
+    ref_hmac secret = ref_hmaclazy secret . fromStrict
+
+    ref_hmaclazy :: ByteString -> BL.ByteString -> ByteString
+    ref_hmaclazy secret = toStrict . REF.bytestringDigest . REF.hmacSha1 (fromStrict secret)
 
     -- toStrict/fromStrict only available with bytestring-0.10 and later
     toStrict = B.concat . BL.toChunks
@@ -150,5 +191,6 @@ refImplTests =
 main :: IO ()
 main = defaultMain $ testGroup "cryptohash-sha1"
     [ testGroup "KATs" katTests
+    , testGroup "RFC2202" rfc2202Tests
     , testGroup "REF" refImplTests
     ]

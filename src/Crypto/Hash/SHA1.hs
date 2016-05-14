@@ -63,7 +63,15 @@ module Crypto.Hash.SHA1
     -- package is recommended.
 
     , hash     -- :: ByteString -> ByteString
-    , hashlazy -- :: ByteString -> ByteString
+    , hashlazy -- :: L.ByteString -> ByteString
+
+    -- ** HMAC-SHA1
+    --
+    -- | <https://tools.ietf.org/html/rfc2104 RFC2104>-compatible
+    -- <https://en.wikipedia.org/wiki/HMAC HMAC>-SHA1 digests
+
+    , hmac     -- :: ByteString -> ByteString -> ByteString
+    , hmaclazy -- :: ByteString -> L.ByteString -> ByteString
     ) where
 
 import Prelude hiding (init)
@@ -76,6 +84,7 @@ import qualified Data.ByteString as B
 import Data.ByteString (ByteString)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.ByteString.Internal (create, toForeignPtr, memcpy)
+import Data.Bits (xor)
 import Data.Word
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -195,20 +204,56 @@ updates ctx d
   | otherwise    = error "SHA1.updates: invalid Ctx"
 
 {-# NOINLINE finalize #-}
--- | finalize the context into a digest bytestring (16 bytes)
+-- | finalize the context into a digest bytestring (20 bytes)
 finalize :: Ctx -> ByteString
 finalize ctx
   | validCtx ctx = unsafeDoIO $ withCtxThrow ctx finalizeInternalIO
   | otherwise    = error "SHA1.finalize: invalid Ctx"
 
 {-# NOINLINE hash #-}
--- | hash a strict bytestring into a digest bytestring (16 bytes)
+-- | hash a strict bytestring into a digest bytestring (20 bytes)
 hash :: ByteString -> ByteString
 hash d = unsafeDoIO $ withCtxNewThrow $ \ptr -> do
     c_sha1_init ptr >> updateInternalIO ptr d >> finalizeInternalIO ptr
 
 {-# NOINLINE hashlazy #-}
--- | hash a lazy bytestring into a digest bytestring (16 bytes)
+-- | hash a lazy bytestring into a digest bytestring (20 bytes)
 hashlazy :: L.ByteString -> ByteString
 hashlazy l = unsafeDoIO $ withCtxNewThrow $ \ptr -> do
     c_sha1_init ptr >> mapM_ (updateInternalIO ptr) (L.toChunks l) >> finalizeInternalIO ptr
+
+
+{-# NOINLINE hmac #-}
+-- | Compute 20-byte <https://tools.ietf.org/html/rfc2104 RFC2104>-compatible
+-- HMAC-SHA1 digest for a strict bytestring message
+--
+-- @since 0.11.100.0
+hmac :: ByteString -- ^ secret
+     -> ByteString -- ^ message
+     -> ByteString
+hmac secret msg = hash $ B.append opad (hash $ B.append ipad msg)
+  where
+    opad = B.map (xor 0x5c) k'
+    ipad = B.map (xor 0x36) k'
+
+    k'  = B.append kt pad
+    kt  = if B.length secret > 64 then hash secret else secret
+    pad = B.replicate (64 - B.length kt) 0
+
+
+{-# NOINLINE hmaclazy #-}
+-- | Compute 20-byte <https://tools.ietf.org/html/rfc2104 RFC2104>-compatible
+-- HMAC-SHA1 digest for a lazy bytestring message
+--
+-- @since 0.11.100.0
+hmaclazy :: ByteString   -- ^ secret
+         -> L.ByteString -- ^ message
+         -> ByteString
+hmaclazy secret msg = hash $ B.append opad (hashlazy $ L.append ipad msg)
+  where
+    opad = B.map (xor 0x5c) k'
+    ipad = L.fromChunks [B.map (xor 0x36) k']
+
+    k'  = B.append kt pad
+    kt  = if B.length secret > 64 then hash secret else secret
+    pad = B.replicate (64 - B.length kt) 0
