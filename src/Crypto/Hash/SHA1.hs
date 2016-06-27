@@ -112,6 +112,7 @@ unsafeDoIO = unsafeDupablePerformIO
 -- Consequently, a SHA-1 digest as produced by 'hash', 'hashlazy', or 'finalize' is 20 bytes long.
 newtype Ctx = Ctx ByteString
 
+-- keep this synchronised with cbits/sha1.h
 {-# INLINE digestSize #-}
 digestSize :: Int
 digestSize = 20

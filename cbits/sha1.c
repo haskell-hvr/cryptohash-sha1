@@ -257,7 +257,7 @@ hs_cryptohash_sha1_update(struct sha1_ctx *ctx, const uint8_t *data, size_t len)
 void
 hs_cryptohash_sha1_finalize(struct sha1_ctx *ctx, uint8_t *out)
 {
-  static uint8_t padding[64] = { 0x80, };
+  static const uint8_t padding[64] = { 0x80, };
 
   /* add padding and update data with it */
   uint64_t bits = cpu_to_be64(ctx->sz << 3);
