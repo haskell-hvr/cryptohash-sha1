@@ -166,7 +166,7 @@ foreign import ccall unsafe "sha1.h hs_cryptohash_sha1_update"
 foreign import ccall safe "sha1.h hs_cryptohash_sha1_update"
     c_sha1_update_safe :: Ptr Ctx -> Ptr Word8 -> CSize -> IO ()
 
--- 'safe' call overhead neglible for 8KiB and more
+-- 'safe' call overhead is negligible for 8KiB and more
 c_sha1_update :: Ptr Ctx -> Ptr Word8 -> CSize -> IO ()
 c_sha1_update pctx pbuf sz
   | sz < 8192 = c_sha1_update_unsafe pctx pbuf sz
