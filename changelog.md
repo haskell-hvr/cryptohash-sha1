@@ -9,7 +9,7 @@
 
 ## 0.11.7.2
 
- - switch to 'safe' FFI for calls where overhead becomes neglible
+ - switch to 'safe' FFI for calls where overhead becomes negligible
  - removed inline assembly in favour of portable C constructs
  - fix 32bit length overflow bug in `hash` function
  - fix inaccurate context-size
