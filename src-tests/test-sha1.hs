@@ -136,7 +136,7 @@ rfc2202Vectors = -- (secrect,msg,mac)
     , (rep 80 0xaa, "Test Using Larger Than Block-Size Key and Larger Than One Block-Size Data", x"e8e99d0f45237d786d6bbaa7965c7808bbff1a91")
     ]
   where
-    x = fst.B16.decode
+    x = B16.decodeLenient
     rep n c = B.replicate n c
 
 rfc2202Tests = zipWith makeTest [1::Int ..] rfc2202Vectors
