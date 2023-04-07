@@ -1,7 +1,7 @@
 ## 0.11.101.0
 
- - Add Eq instance for Ctx
- - add start and startlazy producing Ctx
+ - Add `Eq` instance for `Ctx`
+ - Add `start` and `startlazy` producing `Ctx`
  - Remove ineffective RULES
  - Declare `Crypto.Hash.MD5` module `-XTrustworthy`
  - Convert to `CApiFFI`
